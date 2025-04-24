@@ -1,30 +1,39 @@
-name: C++ CI
+name: CMake Multi-Platform CI
 
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
 
 jobs:
   build:
-    name: Build
+    name: Build ${{ matrix.os }} - ${{ matrix.compiler }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         compiler: [gcc, clang]
+        build_type: [Debug, Release]
         exclude:
           - os: windows-latest
             compiler: clang
           - os: macos-latest
             compiler: gcc
+        include:
+          - os: windows-latest
+            compiler: msvc
+            build_type: Release
 
     steps:
     - uses: actions/checkout@v3
 
-    - name: Set up C++ compiler
-      if: matrix.os != 'windows-latest'
+    - name: Set up C++ compiler (Linux)
+      if: matrix.os == 'ubuntu-latest'
       run: |
         if [ "${{ matrix.compiler }}" = "gcc" ]; then
           sudo apt-get update
@@ -36,6 +45,12 @@ jobs:
           echo "CXX=clang++-12" >> $GITHUB_ENV
         fi
 
+    - name: Set up C++ compiler (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install llvm
+        echo "CXX=/usr/local/opt/llvm/bin/clang++" >> $GITHUB_ENV
+
     - name: Set up MSVC on Windows
       if: matrix.os == 'windows-latest'
       uses: ilammy/msvc-dev-cmd@v1
@@ -46,17 +61,71 @@ jobs:
     - name: Configure CMake
       run: |
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release
+        cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+                 -DCMAKE_CXX_COMPILER=${{ env.CXX }} \
+                 -DBUILD_TESTING=ON
 
     - name: Build
       run: |
         cd build
-        cmake --build . --config Release
+        cmake --build . --config ${{ matrix.build_type }}
+
+    - name: Run CTest
+      run: |
+        cd build
+        ctest -C ${{ matrix.build_type }} --output-on-failure
 
     - name: Run executable
       run: |
         if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          ./build/bin/Release/Battleship.exe
+          ./build/bin/${{ matrix.build_type }}/Battleship.exe
         else
           ./build/bin/Battleship
-        fi 
+        fi
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: Battleship-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.build_type }}
+        path: |
+          build/bin/${{ matrix.build_type }}/
+          build/bin/
+        if-no-files-found: error
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y g++-11 lcov
+
+    - name: Configure CMake with coverage
+      run: |
+        mkdir build_coverage
+        cd build_coverage
+        cmake .. -DCMAKE_BUILD_TYPE=Debug \
+                 -DCMAKE_CXX_FLAGS="--coverage" \
+                 -DBUILD_TESTING=ON
+
+    - name: Build with coverage
+      run: |
+        cd build_coverage
+        cmake --build .
+
+    - name: Run tests with coverage
+      run: |
+        cd build_coverage
+        ctest --output-on-failure
+        lcov --capture --directory . --output-file coverage.info
+        lcov --remove coverage.info '/usr/*' --output-file coverage.info
+
+    - name: Upload coverage report
+      uses: codecov/codecov-action@v3
+      with:
+        file: build_coverage/coverage.info
+        fail_ci_if_error: true 
