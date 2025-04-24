@@ -1,4 +1,4 @@
-#include "Board.h"
+#include "../include/Board.h"
 #include <iostream>
 
 Board::Board(bool isPlayerBoard) : isPlayerBoard(isPlayerBoard) {

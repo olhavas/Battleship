@@ -1,4 +1,4 @@
-#include "Ship.h"
+#include "../include/Ship.h"
 
 Ship::Ship(const std::string& name, int length)
     : name(name), length(length), hits(0), startX(0), startY(0), isHorizontal(true) {}
